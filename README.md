@@ -9,7 +9,7 @@ This is the TCG common class for modules.
 You can install this module using composer:
 
 ```console
-composer require tcg/tcg-common
+composer require the-courier-guy/tcg-common
 ```
 
 ## Usage - mostly for Developers
