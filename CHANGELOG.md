@@ -1,5 +1,22 @@
 # Changelog
 
+## [[v1.0.1]](https://github.com/The-Courier-Guy/TCG_Common/releases/tag/v1.0.1)
+
+### Fixed
+
+- `ShopifyProductService::getAllProducts()` no longer polls forever. It stops when Shopify does not start the bulk
+  operation (and logs Shopify's errors), when the operation fails or cannot be read, and after 120 seconds. Before, an
+  empty status kept a web request polling every 5 seconds with no end.
+- Polls the bulk operation it started (by id) instead of `currentBulkOperation`.
+- Removed the unused `pageInfo` block from the product bulk query.
+- A completed product export with no results URL is treated as an empty catalogue and recorded in the information log,
+  rather than as an error.
+
+### Added
+
+- `ShopifyProductService::bulkOperationIdFromStartResult()` and `ShopifyProductService::waitForBulkOperation()`, with unit
+  tests.
+
 ## [[v1.0.0]](https://github.com/The-Courier-Guy/TCG_Common/releases/tag/v1.0.0)
 
 ### Breaking
