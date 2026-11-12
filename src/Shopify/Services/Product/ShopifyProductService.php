@@ -51,10 +51,6 @@ mutation {
                                             }
                                         }
                                     }
-                                    pageInfo {
-                                        hasNextPage
-                                        endCursor
-                                    }
                                 }
           }
         }
@@ -73,48 +69,52 @@ mutation {
   }
 }
 GRAPHQL;
-        $response          = $client->query([
+        $response = $client->query([
             'query' => $bulkQueryMutation,
         ]);
-        $result            = $response->getDecodedBody();
+        $result   = $response->getDecodedBody();
 
-        $bulkOperationQuery = <<<'GRAPHQL'
-{
-currentBulkOperation {
-    id
-    status
-    errorCode
-    createdAt
-    completedAt
-    objectCount
-    fileSize
-    url
-    partialDataUrl
-  }
-  }
-GRAPHQL;
-        $completed          = false;
-        while (!$completed) {
-            $response = $client->query([
-                'query' => $bulkOperationQuery,
-            ]);
-            $body     = $response->getDecodedBody();
-            $status   = $body['data']['currentBulkOperation']['status'] ?? null;
-            if ($status === 'COMPLETED') {
-                $completed = true;
-            } elseif (in_array($status, ['FAILED', 'CANCELED'])) {
-                Log::error("Bulk operation failed with status: $status", ['shop' => $shop]);
-
-                return [];
-            } else {
-                Log::info("Bulk operation status: $status. Waiting for completion...", ['shop' => $shop]);
-                sleep(5); // Wait before polling again
-            }
+        $operationId = self::bulkOperationIdFromStartResult($result, $shop);
+        if ($operationId === null) {
+            return [];
         }
 
-        $url = $body['data']['currentBulkOperation']['url'] ?? null;
+        $operationQuery = <<<'GRAPHQL'
+query BulkOperationStatus($id: ID!) {
+  node(id: $id) {
+    ... on BulkOperation {
+      id
+      status
+      errorCode
+      objectCount
+      url
+    }
+  }
+}
+GRAPHQL;
+
+        $operation = self::waitForBulkOperation(
+            function () use ($client, $operationQuery, $operationId): array {
+                $body = $client->query([
+                    'query'     => $operationQuery,
+                    'variables' => ['id' => $operationId],
+                ])->getDecodedBody();
+
+                return $body['data']['node'] ?? [];
+            },
+            $shop
+        );
+        if ($operation === null) {
+            return [];
+        }
+
+        $url = $operation['url'] ?? null;
         if (!$url) {
-            Log::error("Bulk operation completed but no URL found for results.", ['shop' => $shop]);
+            // A completed export with no URL means the shop has no products.
+            Log::info('Bulk operation completed with no results URL.', [
+                'shop'         => $shop,
+                'object_count' => $operation['objectCount'] ?? null,
+            ]);
 
             return [];
         }
@@ -284,6 +284,82 @@ GRAPHQL;
             if (!empty($idsToDelete)) {
                 ProductDimension::whereIn('id', $idsToDelete)->delete();
             }
+        }
+    }
+
+    /**
+     * Returns the id of the bulk operation that bulkOperationRunQuery started, or null (and logs why) when Shopify
+     * did not start one.
+     */
+    public static function bulkOperationIdFromStartResult(?array $result, string $shop): ?string
+    {
+        $errors     = $result['errors'] ?? [];
+        $userErrors = $result['data']['bulkOperationRunQuery']['userErrors'] ?? [];
+        $operation  = $result['data']['bulkOperationRunQuery']['bulkOperation'] ?? null;
+
+        if (!empty($errors) || !empty($userErrors) || empty($operation['id'])) {
+            Log::error('Shopify did not start the product bulk operation.', [
+                'shop'        => $shop,
+                'errors'      => $errors,
+                'user_errors' => $userErrors,
+            ]);
+
+            return null;
+        }
+
+        return $operation['id'];
+    }
+
+    /**
+     * Polls a bulk operation until it completes. Returns the operation on COMPLETED, or null (and logs why) when it
+     * fails, cannot be read, or does not finish within $timeoutSeconds.
+     *
+     * @param callable(): array $fetchOperation Returns the BulkOperation node as an array (empty when not found).
+     * @param callable(int): void|null $sleep  Injected for tests; defaults to sleep().
+     */
+    public static function waitForBulkOperation(
+        callable $fetchOperation,
+        string $shop,
+        int $timeoutSeconds = 120,
+        int $intervalSeconds = 5,
+        ?callable $sleep = null
+    ): ?array {
+        $sleep   = $sleep ?? static function (int $seconds): void {
+            sleep($seconds);
+        };
+        $elapsed = 0;
+
+        while (true) {
+            $operation = $fetchOperation();
+            $status    = $operation['status'] ?? null;
+
+            if ($status === 'COMPLETED') {
+                return $operation;
+            }
+
+            if (!in_array($status, ['CREATED', 'RUNNING', 'CANCELING'], true)) {
+                // FAILED, CANCELED, EXPIRED, or no operation found at all.
+                Log::error('Product bulk operation did not complete.', [
+                    'shop'       => $shop,
+                    'status'     => $status,
+                    'error_code' => $operation['errorCode'] ?? null,
+                ]);
+
+                return null;
+            }
+
+            if ($elapsed >= $timeoutSeconds) {
+                Log::error('Product bulk operation timed out.', [
+                    'shop'            => $shop,
+                    'status'          => $status,
+                    'timeout_seconds' => $timeoutSeconds,
+                ]);
+
+                return null;
+            }
+
+            $sleep($intervalSeconds);
+            $elapsed += $intervalSeconds;
         }
     }
 
