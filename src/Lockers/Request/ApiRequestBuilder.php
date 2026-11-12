@@ -1,15 +1,15 @@
 <?php
 
-namespace Pudo\Common\Request;
+namespace Tcg\Common\Lockers\Request;
 
 use stdClass;
 
 class ApiRequestBuilder
 {
-    private array  $shippingDetails;
+    private array $shippingDetails;
     private string $method;
-    private array  $collectionDetails;
-    private array  $parcels;
+    private array $collectionDetails;
+    private array $parcels;
 
     /**
      * @param array $shippingDetails
