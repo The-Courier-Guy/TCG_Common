@@ -1,6 +1,6 @@
 <?php
 
-namespace Pudo\Common\Processor;
+namespace Tcg\Common\Lockers\Processor;
 
 class APIProcessor
 {
@@ -50,7 +50,7 @@ class APIProcessor
     {
         $getLockersResponse = json_decode($getLockersResponse, true);
         $mappedLockers      = [];
-        array_map(function ($locker) use (&$mappedLockers){
+        array_map(function ($locker) use (&$mappedLockers) {
             $mappedLockers[$locker['code']] = $locker;
         }, $getLockersResponse);
 
